@@ -1,0 +1,108 @@
+MODULE MAIN 
+line 46: o_spt.reserved_task(task_id)
+    [DML] UPDATE :
+        SYSTEM.AA_TASK_DAILY_DETAIL
+            status : 'CANCEL'
+            conditions: status in ('OPEN') and 
+                        time_required < current_time and
+                        task_id = task_id
+    
+    [DML] UPDATE:
+        SYSTEM.AA_TASK_DAILY_DETAIL
+            status : 'OPEN'
+            conditions: status in ('RESERVED','ON_PROCESS') and 
+                        task_id = task_id
+
+    CHECK:
+        length : SYSTEM.AA_TASK_DAILY_DETAIL
+            conditions: task_id = task_id and 
+                        time_required >= current_time and 
+                        status = 'OPEN'
+        
+        0 => s_spt.gen_daily_task(task_id)
+            SELECT:
+                SYSTEM.AA_TASK_LIST
+                conditions: id = task_id
+            => task_info : dict (cols) 
+
+            CHECK: Note: check xem task đã hết giờ chạy cho 1 ngày hay chưa ?
+                current_time(ct) > datetime(ct(year,month,day), task_info['DAILY_ENDTIME_REQUIRED'],0,0) 
+                True: review_date(rv_date) = ct(year,month,day) + 1 day 
+                False: review_date(rv_date) = ct(year,month,day)
+
+            CHECK:
+                length: SYSTEM.AA_TASK_DAILY_DETAIL
+                    conditions: task_id = task_id 
+                                review_date = review_date 
+                
+                0 => Note: Gen request for review date 
+                    left_times(lt) = task_info['FREQUENCY']
+                    CHECK: 
+                        lf > 1
+                            Note: Số lần chạy trong ngày
+                            duration = (task_info['DAILY_ENDTIME_REQUIRED'] - task_info['DAILY_STARTTIME_REQUIRED'])/(task_info['FREQUENCY']-1)
+                    time_require(tr) = rv_date(year,month,day,task_info['DAILY_STARTTIME_REQUIRED'],0,0)
+                    start_time(st) = time_require
+                    end_time(et) = rv_date(year,month,day,task_info['DAILY_ENDTIME_REQUIRED'],0,0)
+
+                    LOOP: 
+                        conditions: tr >= st & tr <= et & lt > 0
+                        new_dail_task : dict 
+                            attribute: REVIEW_DATE, TASK_ID, TIME_REQUIRED, STATUS ('OPEN')
+                        [DML] INSERT: query.df_to_db(df_new_daily_task) 
+                            exclusive_col : ID 
+                            SYSTEM.AA_TASK_DAILY_DETAIL
+
+                        lt -= 1
+                        CHECK: note: tạo time cho batch kế
+                            lt > 0:
+                                tr += duration (hours)
+
+        != 0:
+            SELECT
+                SYSTEM.AA_TASK_DAILY_DETAIL
+                conditions: task_id = task_id 
+                            status = 'OPEN'
+                            time_required >= current_time
+                            time_required = min 
+                                conditions: task_id = task_id   
+                                            status = 'OPEN'
+                                            time_required >= current_time
+                            rownum = 1
+                
+                task_info: dict (cols)
+        
+    task_content : SELECT 
+        SYSTEM.AA_TASK_DAILY_DETAIL.CONTENT
+        conditions: id = task_id
+        
+    [DML] UPDATE
+        SYSTEM.AA_TASK_DAILY_DETAIL
+        status = 'RESERVED'
+        conditions: ID = task_info['ID']
+    
+    task_info['STATUS'] = 'ON_PROCESS'
+    task_info['START_TIME'] = now 
+
+    [DML] UPDATE 
+        SYSTEM.AA_TASK_DAILY_DETAIL
+        status = task_info['STATUS'], start_time = task_info['START_TIME']
+        conditions: id = task_info['ID']
+
+    SELECT
+        count: SYSTEM.AA_ERROR_LOG
+        conditions: status = 'NEW'  
+                    mother_task_id = task_id
+
+    CHECK: count > 0 => break
+
+    ----- RUN TASK -----
+    run E01_1_Genreq.py
+
+
+    run E01_1_Runreq.py
+
+
+    run E01_2_Assignment.py
+        
+        

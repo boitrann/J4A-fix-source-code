@@ -15,7 +15,6 @@ task_id = 11
 from support_tool.Connection import query as query
 from support_tool.Connection import Connect_y4abii as biicnn 
 
-
 from support_tool import support_tool as spt
 
 from __Z_MAIN.Z_01_TASK_MANAGEMENT import Z01_spt as o_spt
@@ -23,6 +22,7 @@ from __Z_MAIN.Z_01_TASK_MANAGEMENT import Z01_spt as o_spt
 
 from subprocess import *
 import subprocess as sp
+
 
 import datetime
 

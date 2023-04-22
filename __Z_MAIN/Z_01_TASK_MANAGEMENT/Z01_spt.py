@@ -102,8 +102,6 @@ def gen_daily_task(task_id):
       
 
 
-
-
 def scan_request(current_time, task_id):
     ready_to_run = False
     while ready_to_run == False:
@@ -262,23 +260,6 @@ def reserved_task(task_id):
     pt = pytz.timezone('US/Pacific')
     current_time = datetime.datetime.now(tz = pt).replace(tzinfo = None)
     task_info = s_spt.scan_request(current_time, task_id)
-    """
-    update SYSTEM.AA_TASK_DAILY_DETAIL
-    set status = 'CANCEL' 
-    WHERE status IN ('OPEN')
-    and time_required < to_date(current_time)
-    and task_id = 11' 
-    """
-
-    """
-    update SYSTEM.AA_TASK_DAILY_DETAIL
-    set status = 'OPEN' 
-    WHERE status IN ('RESERVED', 'ON_PROCESS')
-    and task_id = 11' 
-    """
-
-
-
 
     task_content = query.query(biicnn, """ select CONTENT from SYSTEM.AA_TASK_LIST 
                                where id = """ +str(task_id)).iloc[0]['CONTENT']

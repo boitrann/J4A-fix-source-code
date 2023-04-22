@@ -1,0 +1,2 @@
+Module: Z01_spt.scan_request
+    Nếu available == 0 thì module sẽ bị lỗi
