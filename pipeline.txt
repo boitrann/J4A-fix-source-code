@@ -258,10 +258,119 @@ Remind:
                 path_conv = fd_cf['collected_path_conv']
                 Nối tất cả các file từ bước trên vào thư mục path_conv 
                 output : REQ_(req_id)_CI_Sum_Full 
+            
+            df_sum_new, req_note = s_spt.process_new_sum(df_sum_new)
+                min_invoice_date = df_sum_new['INVOICE_DATE'].min() -> str
+                df_master : SELECT 
+                    SYSTEM.E01_COIN_OVERALL_MASTER
+                    conditions: INVOICE_DATE >= min_invoice_date
+                df_mer = df_master.append(df_sum_new)
+                    cols: INVOICE_ID, INVOICE_DATE, AGREEMENT_ID, AGREEMENT_TITLE, FUNDING_TYPE, ORIGINAL_BALANCE
 
+                list_dup_full, list_update, list_new = spt.check_modify(df_mer, df_new[mer_cols], 'INVOICE_ID')
+                df_sum_new['UPDATE_STATUS'] : NaN 
+                CHECK: INVOICE_ID in 
+                    list_new -> 'UPDATE_STATUS' = "NEW"
+                    list_update -> 'UPDATE_STATUS' = "Update"
+                    list_dup_full -> 'UPDATE_STATUS' = "Duplicated"
+                
+                reset Index 
+                df_sum_new['LAST_ID'] = df_sum_new LEFT JOIN df_master ON 'INVOICE_ID' -> 'ID'
+                status_note : str
+                    Total: len(df_sum_new)
+                        New: len(list_new)
+                        Update: len(list_update)
+                        Duplicated: len(list_dup_full)
+            
+            [DML] DELETE
+                SYSTEM.E01_COIN_OVERALL_FULLOG
+                conditions: reg_id = reg_info['REQ_ID']
+            [DML] INSERT
+                SYSTEM.E01_COIN_OVERALL_FULLOG
+                conditions: df_sum_new
+            
+            s_spt.update_fullog_to_master(...)
+                df_mt : SELECT 
+                    all_tab_columns
+                    conditions: table_name = master_table , owner = SYSTEM 
+                
+                df_fl : SELECT 
+                    all_tab_columns
+                    conditions: table_name = fullog_table , owner = SYSTEM
 
+                [DML] DELETE 
+                    SYSTEM.E01_COIN_OVERALL_MASTER
+                    conditions: INVOICE_ID in 
+                        SELECT 
+                        SYSTEM.E01_COIN_OVERALL_FULLOG
+                        conditions: UPDATE_STATUS = 'Update'
+                                    REQ_ID = req_info['REQ_ID']
+                
+                trans_cols : cols df_ms = df_fl not in ignore cols 
+                [DML] INSERT
+                    SYSTEM.E01_COIN_OVERALL_MASTER (trans_cols)
+                    conditions: SELECT 
+                        SYSTEM.E01_COIN_OVERALL_FULLOG
+                        conditions: reg_id = req_info['REQ_ID']
+                                    update_status <> 'Duplicated'
 
+            s_spt.gen_request_detail(int(req_info['REQ_ID']))
+                CHECK: count SELECT 
+                    SYSTEM.E01_COIN_REQ_DETAIL
+                    conditions: STATUS = 'Pending....'
+                
+                0:      
+                    [DML] INSERT 
+                        SYSTEM.E01_COIN_REQ_DETAIL
+                        REQ_TIME = now, REQ_SOURCE = '[Req_overral_id reg_id]', STATUS = 'Pending - Wating for adding'
 
+                    new_oa_req_id : SELECT REG_ID -> newest 
+                        SYSTEM.E01_COIN_REQ_DETAIL
+                        conditions: STATUS = 'Pending....'
+                !=0:
+                    CHECK:
+                        newest '[Req_overral_id reg_id]' not in REQ_SOURCE có REQ_ID mới nhất
+                    [DML] UPDATE 
+                        SYSTEM.E01_COIN_REQ_DETAIL
+                        REQ_SOURCE = 'REQ_SOURCE có newest reg_id,[Req_overral...]'
+                        conditions: reg_id = newest reg_id 
+                
+                df_new_req_detail : SELECT 
+                    SYSTEM.E01_COIN_OVERALL_FULLOG
+                    conditions: reg_id 
+                                update_status in ('Update','New')
+                add cols:
+                    REQ_ID : newest reg_id pending
+                    REQ_SOURCE : '[Req_overral_id reg_id]'
+                    STATUS_SHORTAGE : 'Open'
+                    STATUS_DETAIL : 'Open'
+                
+                df_booked_list: SELECT invoice_number 
+                    SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                    conditions: reg_id = newest reg_id pending
+                
+                df_new_req_detail:
+                    drop các INVOICE_ID in INVOICE_NUMBER của df_booked_list
+                    Get cols:
+                        REG_ID, REQ_SOURCE, INVOICE_ID, STATUS_SHORTAGE, STATUS_DETAIL
+                        đổi INVOICE_ID -> INVOICE_NUMBER
+
+                [DML]: INSERT 
+                    SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                    exclusive cols: ID 
+                    df_new_req_detail
+                
+                req_info {}
+                    STATUS: 'Complete'
+                    FINISH_TIME: now 
+                    COLLECTED_FILE_NAME : ['file_name']
+                    CONVERTED_FILE_NAME : converted_file_name
+                    REMARKS : status_note
+
+                [DML] UPDATE 
+                    SYSTEM.E01_COIN_REQ_OVERALL
+                    newest reg_info
+                    conditions: REQ_ID
 run E01_2_Assignment.py
         
         
