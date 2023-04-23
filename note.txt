@@ -1,2 +1,5 @@
 Module: Z01_spt.scan_request
     Nếu available == 0 thì module sẽ bị lỗi
+
+Module _E_01_VendorCoopInvoice.E01_1_Overall.E01_1_Spt.scan_collectdetail_req
+    Tại sao lấy min REQ_ID ?

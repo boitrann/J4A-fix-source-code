@@ -4,25 +4,25 @@ line 46: o_spt.reserved_task(task_id)
         SYSTEM.AA_TASK_DAILY_DETAIL
             status : 'CANCEL'
             conditions: status in ('OPEN') and 
-                        time_required < current_time and
-                        task_id = task_id
+                        time_required < current_time 
+                        task_id = 11
     
     [DML] UPDATE:
         SYSTEM.AA_TASK_DAILY_DETAIL
             status : 'OPEN'
             conditions: status in ('RESERVED','ON_PROCESS') and 
-                        task_id = task_id
+                        task_id = 11
 
     CHECK:
         length : SYSTEM.AA_TASK_DAILY_DETAIL
-            conditions: task_id = task_id and 
+            conditions: task_id = 11 and 
                         time_required >= current_time and 
                         status = 'OPEN'
         
         0 => s_spt.gen_daily_task(task_id)
             SELECT:
                 SYSTEM.AA_TASK_LIST
-                conditions: id = task_id
+                conditions: id = 11
             => task_info : dict (cols) 
 
             CHECK: Note: check xem task đã hết giờ chạy cho 1 ngày hay chưa ?
@@ -32,7 +32,7 @@ line 46: o_spt.reserved_task(task_id)
 
             CHECK:
                 length: SYSTEM.AA_TASK_DAILY_DETAIL
-                    conditions: task_id = task_id 
+                    conditions: task_id = 11 
                                 review_date = review_date 
                 
                 0 => Note: Gen request for review date 
@@ -61,11 +61,11 @@ line 46: o_spt.reserved_task(task_id)
         != 0:
             SELECT
                 SYSTEM.AA_TASK_DAILY_DETAIL
-                conditions: task_id = task_id 
+                conditions: task_id = 11 
                             status = 'OPEN'
                             time_required >= current_time
                             time_required = min 
-                                conditions: task_id = task_id   
+                                conditions: task_id = 11   
                                             status = 'OPEN'
                                             time_required >= current_time
                             rownum = 1
@@ -74,7 +74,7 @@ line 46: o_spt.reserved_task(task_id)
         
     task_content : SELECT 
         SYSTEM.AA_TASK_DAILY_DETAIL.CONTENT
-        conditions: id = task_id
+        conditions: id = 11
         
     [DML] UPDATE
         SYSTEM.AA_TASK_DAILY_DETAIL
@@ -92,17 +92,176 @@ line 46: o_spt.reserved_task(task_id)
     SELECT
         count: SYSTEM.AA_ERROR_LOG
         conditions: status = 'NEW'  
-                    mother_task_id = task_id
+                    mother_task_id = 11
 
     CHECK: count > 0 => break
 
-    ----- RUN TASK -----
-    run E01_1_Genreq.py
+----- RUN TASK -----
+run E01_1_Genreq.py
+    req_info['REQ_TIME'] = now
+    CHECK:
+        current = 'Saturday'
+        True: period_len = 90
+        False: period_len = 60
+
+    req_info {}:
+        'STATUS' : 'Open'
+        'FROM_DATE' : now - period -> str: %Y-%m-%d %H:%M:%S
+        'TO_DATE': now -> str: %Y-%m-%d %H:%M:%S
+
+    try:
+        [DML] INSERT:
+            SYSTEM.E01_COIN_REQ_OVERALL
+            exclusive columns : 'REQ_ID'
+            req_info -> matched cols
+    except: 
+        e = sys.exc_info()
+        er_info : {}
+            'MOTHER_TASK_ID': 11
+            'MOTHER_TASK_CONTENT': 'E01_COOPINVOICE'
+            'MODULE_ID' : 'E01_1_1'
+            'MODULE_CONTENT': 'COOPINV: GEN REQ CL'
+            'LOG_TIME' : now
+            'ER1..3' = e[0..2]
+            'STATUS' = 'NEW'
+
+        [DML] INSERT:
+            AA_ERROR_LOG
+            exclusive cols: 'LOG_ID'
+            er_info -> matched cols
+    
+    CHECK:
+        count: AA_ERROR_LOG 
+            conditions: status = 'NEW'
+                        mother_task_id = 11
+        > 0: break
+        = 0: next run 
+    
 
 
-    run E01_1_Runreq.py
+run E01_1_Runreq.py
+
+Remind:
+    req_info {}:
+        'REQ_ID' : sequence
+        'REQ_TIME' : now
+        'STATUS' : 'Open'
+        'FROM_DATE' : now - period -> str: %Y-%m-%d %H:%M:%S
+        'TO_DATE': now -> str: %Y-%m-%d %H:%M:%S
 
 
-    run E01_2_Assignment.py
+    CHECK: SELECT -> df_req_overall
+        SYSTEM.E01_COIN_REQ_OVERALL
+        conditions: status = 'Open'
+    0: -> ready_to_run = False
+    !=0:
+        reg_id : df_req_overall['REQ_ID'] -> min
+        CHECK: 
+            reg_id : NaN 
+        True: ready_to_run : False
+        False:
+            req_info {}
+                'REQ_ID': req_id 
+                'FROM_DATE' : df_req_overall['FROM_DATE']
+                'TO_DATE' : df_req_overall['TO_DATE']
+            ready_to_run = True
+
+        CHECK:
+            ready_to_run : True
+        True:
+            req_info {}
+                'STATUS' : 'On_process'
+                'START_TIME' : now
+            
+            [DML] UPDATE:
+                SYSTEM.E01_COIN_REQ_OVERALL
+                ref: reg_info {}
+                update cols: 'STATUS','START_TIME'
+                conditions: 'REG_ID'
+
+            max_duration = 15
+            filter_date_list:
+                Lấy các khoảng thời gian từ 'FROM_DATE' đến 'TO_DATE' theo bước nhảy 15 days 
+                Nếu bước nhảy không đủ 15 days thì lấy ngày TO_DATE 
+            -> [{'Start_date':sd1,'End_date':ed1},{'Start_date':sd2,'End_date':ed2},...]
+
+            filter_conditions {} = filter_date_list
+                'Download_Status' : False 
+
+            bot_profile , assign_status = main_spt.assign_bot_center(biicnn, er_info['MODULE_ID'], req_info['REQ_ID'])
+                limit_by_compname : SELECT sum(LIMIT_ACCESS)
+                    SYSTEM.BOT_LIMIT_BY_COMPUTER
+                    conditions: COMPUTER_NAME = env('COMPUTERNAME')
+                
+                count_all : SELECT count 
+                    SYSTEM.BOT_CENTER_MANAGEMENT
+                    conditions: computer_name = env('COMPUTERNAME')
+                                user_name = env('USERNAME')
+                
+                count_on_process: SELECT count 
+                    SYSTEM.BOT_CENTER_MANAGEMENT
+                    conditions: status = 'On_process'
+                                computer_name = env
+                
+                count_available: 
+                    conditions: status = 'Available'
+                
+                CHECK: count_available >0 & count_on_process < limit_by_compname
+                    TRUE:
+                        df_bot_info: SELECT 
+                            SYSTEM.BOT_CENTER_MANAGEMENT
+                            conditions: computer_name, user_name
+                                        status = 'Available'
+                                        rownum = 1
+                        bot_profile {} = df_bot_info
+
+                        [DML] UPDATE 
+                            SYSTEM.BOT_CENTER_MANAGEMENT
+                            status = 'On_process', task = er_info['MODULE_ID'], req_id = req_info['REQ_ID']
+                            conditions: id = bot_profile['ID']
+                        assign_status = True
+
+                FALSE:
+                    assign_status = False
+                    bot_profile {}
+            
+            driver = lg.login_with_cookies(bot_profile['DOWNLOAD_PATH'])
+            try:
+                driver = lg.check_logout(driver)
+
+            summary_files_info,er_info = s_spt.collect_summaries(driver,temp_dl_path, filter_conditions, req_info,er_info)
+                LOOP : mỗi range trong filter_conditions -> Start_date, End_date
+                    Nhập thông tin Start_date, End_date vào link 'Vendorcentral....'
+                    -> withdraw_time = now, status = True
+
+                    Xóa các file trong thư mục 'DOWNLOAD_PATH'
+                    Dùng selenium xử lý các nút, sau đó 'Export to a spreadsheet'
+                    Đổi tên file: REQ_(req_id)_CI_Sum_(Start_date)_(End_date).xls
+                    Di chuyển file này vào thư mục: fd_cf['collected_path_ori']
+
+                    new_file_info {}
+                        'File_name' : REQ_...xls 
+                        'Withdraw_time' : now
+                        'Folder_path' : fd_cf['collected_path_ori'] 
+                        'Status' : True 
+                    
+                    summary_files_info.append(new_file_info)
+                
+            Dùng selenium để clearBrowserData
+
+            [DML] UPDATE 
+                SYSTEM.BOT_CENTER_MANAGEMENT
+                status = 'Available', task = Null, req_id = Null, update_time_vn = now
+                conditions: id = bot_profile['ID']
+            
+            df_sum_new, converted_file_name = s_spt.combine_summary_file(summary_files_info, path_conv, req_info)
+                path_conv = fd_cf['collected_path_conv']
+                Nối tất cả các file từ bước trên vào thư mục path_conv 
+                output : REQ_(req_id)_CI_Sum_Full 
+
+
+
+
+run E01_2_Assignment.py
         
         
