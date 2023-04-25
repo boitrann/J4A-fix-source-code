@@ -282,7 +282,7 @@ def download_shortage_detail_files(driver, df_req_detail, temp_dl_path, req_id):
                 # table = driver.find_elements_by_xpath('//*[@id="cc-invoice-table"]/div[5]/div/table/tbody/tr')# gốc
                 #// *[ @ id = "kat-invoice-table"] / table / tbody / tr
                 tables = driver.find_elements_by_xpath('//*[@id="cc-invoice-table"]/div[5]/div/table/tbody/tr')
-                for table in tables[1:]:
+                for table in tables[1:]:  
                     # sleep(2)
                     # invoice_num = table[i].find_element_by_id('r' + str(i) +'-INVOICE_NUMBER').text
                     invoice_num = table.find_element_by_xpath('td[2]').text
@@ -295,7 +295,7 @@ def download_shortage_detail_files(driver, df_req_detail, temp_dl_path, req_id):
                         'STATUS_DETAIL']
                     req_id = df_req_detail[df_req_detail['INVOICE_NUMBER'] == invoice_num].iloc[0]['REQ_ID']
                     # check_status shortage before download
-                    try:
+                    try: 
                         if shortage_status in status_choose:
                             download_shortage_status = 'Fail'
                             # Tải Shortage

@@ -371,6 +371,288 @@ Remind:
                     SYSTEM.E01_COIN_REQ_OVERALL
                     newest reg_info
                     conditions: REQ_ID
+
 run E01_2_Assignment.py
-        
+    df_req_oa_pending : SELECT
+        SYSTEM.E01_COIN_REQ_DETAIL
+        conditions: status = 'Pending - Wating for adding'
+    
+    CHECK: length 
+        0: new_req_info {}
+            'REQ_TIME' : now 
+            'REQ_SOURCE' : '[Re-scan]'
+            'STATUS' : 'Pending - Wating for adding'
+
+            [DML] : INSERT 
+                new_req_info -> SYSTEM.E01_COIN_REQ_DETAIL
+            
+            df_req, ready_to_run, req_info = s_spt.scan_req_wipurpose('Assignment')
+                df_req : SELECT 
+                    SYSTEM.E01_COIN_REQ_DETAIL
+                    conditions: status <> 'Complete'
+                
+                on_process_count = count status = 'On_process' và assignment_status = 'Assigned' của df_reg
+                current_open = count status = 'Open' của df_reg 
+                current_pending = count status = 'Pending...'
+                CHECK: current_open == 0 và current_pending > 0
+                    TRUE:
+                        pending_id = min 'REQ_ID' của df_reg với status = 'Pending...' 
+                        Set giá trị Status của hàng này = 'Open'
+                open_count = count status = 'Open' và assignment_status != 'Assigned' (Chưa được Assigned)
+                req_id = min 'REQ_ID' của df_reg với status = 'Open' và assignment_status != 'Assigned'
+                
+                CHECK:
+                    on_process_count > 0 -> 'Processing another request, please comeback later'
+                    open_count = 0 -> 'No Available request to process'
+                    req_id = NaN -> 'Please check, error in request ID = Null'
+                    TRUE:
+                        ready_to_run = False
+                    FALSE:
+                        ready_to_run = True
+                        req_info {}
+                            REQ_ID = req_id 
+                            REQ_SOURCE = Lấy giá trị REQ_SOURCE của req_id trong df_req
+                
+                CHECK:
+                    ready_to_run
+                    TRUE:
+                        **s_spt.add_missing_detail_shortage(req_info)
+                            df_new_req_detail : Lấy invoice_ID as invoice_number
+                                SYSTEM.E01_COIN_OVERALL_MASTER
+                                conditions: không nằm trong bảng SYSTEM.E01_COIN_SHORTAGE_MASTER
+                        
+                            df_new_req_detail {}
+                                'REQ_ID' = req_info['REQ_ID']
+                                'REQ_SOURCE' = 'Add_missing'
+                                'STATUS_SHORTAGE' = 'Open'
+                                'STATUS_DETAIL' = 'Open'
+                            
+                            df_booked_list : Lấy invoice_number 
+                                SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                                conditions: REQ_ID = req_info 
+                            
+                            Lọc df_new_req_detail bỏ đi các invoice_number nằm trong df_booked_list 
+                            [DML] INSERT : df_new_req_detail
+                                SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                                exclusives: ID 
+                        
+                        **s_spt.add_missing_detail_promotion(req_info)
+                            df_new_req_detail : Lấy invoice_ID as invoice_number
+                                SYSTEM.E01_COIN_OVERALL_MASTER
+                                conditions: không nằm trong bảng SYSTEM.E01_NO_RECORD_DETAIL
+                                                                SYSTEM.E01_COIN_DETAIL_FILEMAN
+                                            type_info ('NORMAL_PROMOTION_FUNDING_AGREEMENT','NORMAL_PROMOTION_FEE_AGREEMENT','COUPON_PROMOTION', 'PROMOTION')
+                                
+                                Làm tương tự với Shorage, với REQ_SOURCE = 'Add_missing_detail_promotion'
+                                [DML] INSERT : df_new_req_detail
+                                    SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                                    exclusives: ID
+                        
+                        **s_spt.add_fail_and_other(req_info)
+                            df_new_req_detail : Lấy invoice_number 
+                                SYSTEM.E01_COIN_REQ_DETAIL_LIST (group by invoice_number -> ID in max(id))
+                                conditions: 
+                                (    (remarks = (NULL or "No records were found.) and status_detail = 'No_record' )
+                                    or  status_detail = 'Fail'
+                                )
+                                AND nằm trong SYSTEM.B01_COOPINV_VALIDATION có DIFF_OVR_DET <> 0
+                                
+                                Làm tương tự với Shorage, với REQ_SOURCE = 'Add_last_fail_or_no_record_not_compliance'
+                                [DML] INSERT : df_new_req_detail
+                                    SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                                    exclusives: ID
+
+                        req_info['STATUS'] = 'Open'
+                        [DML] UPDATE 
+                            SYSTEM.E01_COIN_REQ_DETAIL
+                            status = req_info['STATUS']
+                            conditions: req_id 
+
+                        df_req_detail_ori: SELECT 
+                            SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                            conditions: req_id 
+                        
+                        total_request = length df_req_detail_ori
+                        min_request_per_bot = max (total_request,100)
+                        df_req_detail_ori['ASSIGNED_BATCH'] = NaN 
+                        -> order by ID asc 
+                        CHECK: length df_req_detail_ori > 0
+                            TRUE:
+                                assign_list: lấy min_request_per_bot giá trị đầu tiên của  df_req_detail_ori có 
+                                    ASSIGNED_BATCH is null 
+                                    và REQ_ID = req_info 
+                                SET giá trị ASSIGNED_BATCH của df_req_detail_ori mà có ID nằm assign_list = 1
+                                acc_assign = độ dài assign_list
+                                assigned_batch_list = [1]
+
+                                min_id : lấy min ID trong df_req_detail_ori mà có 'ASSIGNED_BATCH' = 1
+                                max_id : lấy max ID trong df_req_detail_ori mà có 'ASSIGNED_BATCH' = 1
+
+                                [DML] UPDATE: 
+                                    SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                                    ASSIGNED_BATCH = 1 
+                                    conditions: ID between (min_id, max_id)
+                                
+                                CHECK: len(assign_list) == len(df_req_detail_ori)
+                                    TRUE: break 
+                                
+                                req_info['ASSIGNMENT_STATUS'] = 'Assigned'
+                                [DML] UPDATE:
+                                    SYSTEM.E01_COIN_REQ_DETAIL 
+                                    'ASSIGNMENT_STATUS' = 'Assigned'
+                                    conditions: req_id
+
+            spt.E02_collect_deatil()
+                df_req, ready_to_run, req_info = s_spt.scan_req_wipurpose('Run_req')
+                    df_req: SELECT 
+                        SYSTEM.E01_COIN_REQ_DETAIL 
+                        conditions: status <> 'Complete'
+                    on_process_count: count status = 'On_process' và assignment_status = 'Assigned'
+                    open_count = count status = 'Open' và assignment_status = 'Assigned'
+                    reg_id = min REG_ID mà có status = 'Open' và assignment_status = 'Assigned'
+                        
+                    CHECK:
+                        on_process_count > 0 -> 'Processing another request, please comeback later'
+                        open_count = 0 -> 'No Available request to process'
+                        req_id = NaN -> 'Please check, error in request ID = Null'
+                        TRUE:
+                            ready_to_run = False
+                        FALSE:
+                            ready_to_run = True
+                            req_info {}
+                                REQ_ID = req_id 
+                                REQ_SOURCE = Lấy giá trị REQ_SOURCE của req_id trong df_req   
+
+                    CHECK:  ready_to_run = True              
+                        TRUE:
+                            req_info['STATUS'] = 'On_process'
+                            req_info['START_TIME'] = now   
+                            [DML] UPDATE 
+                                SYSTEM.E01_COIN_REQ_DETAIL
+                                req_info ['STATUS','START_TIME']
+
+                        bot_profile , assign_status = main_spt.assign_bot_center(biicnn, er_info['MODULE_ID'], req_info['REQ_ID'])
+                            computer_name = env['COMPUTERNAME']
+                            user_name = env['USERNAME']
+                        
+                        limit_by_compname : SELECT sum(LIMIT_ACCESS)
+                            SYSTEM.BOT_LIMIT_BY_COMPUTER
+                            conditions: COMPUTER_NAME
+                        
+                        count_all : SELECT count 
+                            SYSTEM.BOT_CENTER_MANAGEMENT
+                            conditions: computer_name, user_name
+                        
+                        CHECK: limit > 0 và count_all > 0
+                            TRUE:
+                                count_on_process: SELECT count
+                                    SYSTEM.BOT_CENTER_MANAGEMENT
+                                    conditions: computer_name, status = 'On_process'
+                                
+                                count_available : status = 'Available'
+
+                                CHECK:
+                                    available >0 và on_process < limit:
+                                        df_bot_info : SELECT 
+                                            SYSTEM.BOT_CENTER_MANAGEMENT
+                                            conditions: computer_name, user_name, status = 'Available'
+                                                        rownum = 1
+                                        
+                                        avai_bot_info {} : df_bot_info
+                                            'STATUS' = 'On_process'
+                                        
+                                        [DML] UPDATE 
+                                            SYSTEM.BOT_CENTER_MANAGEMENT 
+                                            status = 'On_process', task=er_info['MODULE_ID'], req_id = req_info['REQ_ID']
+                                            update_time_vn = now 
+                                            conditions: id = avai_bot_info['ID']
+                                        
+                        bot_code = bot_profile['BOT_CODE']
+                        s_spt.bot_take_batch(bot_code, req_info)
+                            df : SELECT min(ASSIGNED_BATCH) -> reg_batch_id 
+                                SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                                conditions: reg_id = reg_info 
+                                            assigned_bot is null 
+                            
+                            [DML] UPDATE 
+                                SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                                assigned_bot = bot_code 
+                                conditions: reg_id , ASSIGNED_BATCH = reg_batch_id
+                        
+                        LOOP: count_try = 0, status_scc = 0
+                            df_req_detail : SELECT 
+                                SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                                conditions: reg_id 
+                            
+                            none_collect_status = ['Collected', 'Complete', 'No_record']
+                            CHECK: len(df_req_detail) > 0
+                                STATUS_SHORTAGE not in none_collect_status
+                                OR STATUS_DETAIL not in none_collect_status
+
+                                TRUE:
+                                    (RawData)**s_spt.download_shortage_detail_files(driver, df_req_detail, temp_dl_path, req_info['REQ_ID'])
+                                        - Tạo 2 folder mới: shortage path, detail path
+
+                                        status_choose = ['Open', 'Open-recollect', 'Fail']
+                                        phase_count = 0 
+                                        total_not_yet = 1
+                                        LOOP: phase_count < 2 và total_not_yet > 0
+                                            df_processing : lọc df_req_detail có STATUS_SHORTAGE hoặc STATUS_DETAIL IN ['Open', 'Open-recollect', 'Fail']
+                                            total_not_yet = len(df_processing)
+                                            phase_count += 1
+
+                                            geturl: 'https://vendorcentral.amazon.com/hz/vendor/members/coop?ref_=vc_xx_subNav'
+                                            count = 0
+                                            count_full = 0
+                                            invoice_list = ''
+
+                                            LOOP: Mỗi row IN df_processing
+                                                invoice_ID = row['INVOICE_NUMBER']
+                                                shortage_status = row['STATUS_SHORTAGE']
+                                                detail_status = row['STATUS_DETAIL']
+                                                count += 1
+                                                Nếu count <= 5 (batch_no)
+                                                    invoice_list += invoice_ID + ' , \n'
+                                                count_full += 1
+
+                                                Nếu invoice_list đủ 5 invoice_IDs:
+                                                    Nhập invoice_list vào khung search trên trình duyệt
+                                                    Bấm Search 
+
+                                                Với mỗi dòng trong bảng:
+                                                    invoice_num = dữ liệu Invoice_ID 
+                                                    shortage_status = lấy STATUS_SHORTAGE từ df_req_detail mà có INVOICE_NUMBER = invoice_num
+                                                    detail_status = lấy STATUS_DETAIL từ df_req_detail mà có INVOICE_NUMBER = invoice_num
+                                                    req_id lấy REQ_ID từ df
+
+                                                    *Nếu shortage_status IN ['Open', 'Open-recollect', 'Fail']
+                                                        download_shortage_status = 'Fail'
+                                                        DOWNLOAD file excel về.
+                                                        Đổi tên file .csv sau đó di chuyển đến thư mục shortage_path
+                                                        download_shortage_status = 'Collected'
+                                                    Ngược lại:
+                                                        download_shortage_status = shortage_status
+                                                    
+                                                    SET STATUS_SHORTAGE của df_req_detail có INVOICE_NUMBER = invoice_num bằng download_shortage_status
+
+                                                    req_dt_info {}
+                                                        REQ_ID:  
+                                                        STATUS_SHORTAGE : download_shortage_status
+                                                        WITHDRAW_TIME : now 
+                                                        INVOICE_NUMBER : invoice_num 
+
+                                                    [DML] UPDATE 
+                                                        SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                                                        STATUS_SHORTAGE, WITHDRAW_TIME
+                                                        conditions: reg_id, invoice_number 
+
+                                                    
+                                                    *Nếu detail_status IN ['Open', 'Open-recollect', 'Fail']
+                                                        no_report_text = ''
+                                                        download_detail_status, df_list_file_name, no_report_text = s_spt.download_detail_files(
+                                                                            driver, table,invoice_num, temp_dl_path, detail_path, req_id)
+
+
+
+
         

@@ -108,7 +108,7 @@ try:
         # Assignment
         er_info['PHASE_NOTE'] = '9'
         if len(df_req_detail_ori)>0:
-            for batch in range(1, num_batch + 1):
+            for batch in range(1, num_batch + 1): # Chạy 1 lần
                 er_info['PHASE_NOTE'] = '10'
                 print(batch)
                 assign_list = []

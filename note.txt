@@ -3,3 +3,5 @@ Module: Z01_spt.scan_request
 
 Module _E_01_VendorCoopInvoice.E01_1_Overall.E01_1_Spt.scan_collectdetail_req
     Tại sao lấy min REQ_ID ?
+
+Module E01_2_Detail.E01_2_Assignment
