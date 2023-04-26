@@ -652,7 +652,189 @@ run E01_2_Assignment.py
                                                         download_detail_status, df_list_file_name, no_report_text = s_spt.download_detail_files(
                                                                             driver, table,invoice_num, temp_dl_path, detail_path, req_id)
 
+                                                            Download từng invoice ở dạng ('Backup report') và di chuyển vào thư mục 'detail_path'
+                                                            -> download_detail_status = 'Collected'
+                                                            -> df_list_file_name {}
+                                                                    [REQ_ID, INVOICE_NUMBER, FILE_NAME, WITHDRAW_TIME]
+                                                        
+                                                        Nếu download_detail_status = 'Collected':
+                                                            [DML] - DELETE 
+                                                                SYSTEM.E01_COIN_DETAIL_FILEMAN
+                                                                conditions: reg_id, invoice_num
+                                                            
+                                                            [DML] - INSERT  df_list_file_name
+                                                                SYSTEM.E01_COIN_DETAIL_FILEMAN
+                                                        
+                                                        req_dt_info {}
+                                                            REQ_ID = reg_id 
+                                                            STATUS_DETAIL = download_detail_status
+                                                            WITHDRAW_TIME = now 
+                                                            INVOICE_NUMBER = invoice_num
+                                                            REMARKS = no_report_text (Nếu report không có)
+                                                        
+                                                        [DML] - UPDATE 
+                                                            SYSTEM.E01_COIN_REQ_DETAIL_LIST
+                                                            Updates: 'STATUS_DETAIL', 'WITHDRAW_TIME', 'REMARKS'
+                                                            conditions: 'REQ_ID', 'INVOICE_NUMBER'
+                                                        
+                                                        Nếu download_detail_status = 'No_record'
+                                                            avai_norec: SELECT sum(count_no_rec)
+                                                                SYSTEM.E01_NO_RECORD_DETAIL
+                                                                conditions: invoice_number = invoice_num
+                                                            
+                                                            new_count_norec = {}
+                                                                INVOICE_NUMBER : invoice_num
+                                                                LAST_WITHDRAW_TIME : now
+                                                                LAST_REQ_ID : reg_id 
+                                                            
+                                                            Nếu avai_norec = 0 hoặc None: 
+                                                                new_count_norec['COUNT_NO_REC'] = 1
+                                                                [DML] INSERT : new_count_norec
+                                                                    SYSTEM.E01_NO_RECORD_DETAIL
+                                                            Hoặc nếu có dữ liệu:
+                                                                new_count_norec['COUNT_NO_REC'] = avai_norec + 1
+                                                                [DML] UPDATE 
+                                                                    SYSTEM.E01_NO_RECORD_DETAIL
+                                                                    Updates: COUNT_NO_REC 
+                                                                    conditions: INVOICE_NUMBER
+                                                            
+                                                            Cập nhật giá trị 'STATUS_DETAIL' cho df_req_detail = download_detail_status
+                                                    
+                                                    Hoặc nếu detail_status NOT IN ['Open', 'Open-recollect', 'Fail']:
+                                                        download_detail_status = detail_status
+                                                    
+                                                    total_not_yet = df_req_detail có 'STATUS_SHORTAGE' hoặc 'STATUS_DETAIL' IN ('Open', 'Open-recollect', 'Fail')
 
+                                                    Download file PDF ở mỗi invoice_number vào thư mục 'pdf_path'
+
+                                clean_chrome_history                        
+                                Cập nhật BOT status = 'Available'
+
+                                df_req_detail = Lấy danh sách các req trong bảng E01_COIN_REQ_DETAIL_LIST với REG_ID = reg_id
+
+                                Với mỗi dòng trong df_req_detail:
+                                    nếu cột STATUS_SHORTAGE = 'Collected'
+                                        Lấy invoice_number 
+                                        df_new_shortage, withdraw_time = s_spt.open_shortage_file(req_id, invoice_number)
+                                            Với mỗi file invoice_number trong 'shortage_path'/REG_{reg_id}
+                                                Lấy dữ liệu bỏ đi header (row 1) -> df_new_shortage
+                                                Lấy ra thời gian hoàn thành xử lý file -> withdraw_time
+                                                Thêm các cột vào df_new_shortage
+                                                    REQ_ID, WITHDRAW_TIME, INVOICE_NUMBER
+                                                
+                                                s_spt.update_transittb_df_to_fullog(req_id, df_new_shortage, invoice_number, db_if['st_fl']['tb'])
+                                                    [DML] DELETE 
+                                                        E01_COIN_SHORTAGE_FULLOG
+                                                        conditions: REQ_ID, INVOICE_NUMBER
+                                                    
+                                                    [DML] INSERT : df_new_shortage
+                                                        E01_COIN_SHORTAGE_FULLOG
+                                                        exclusives: ID 
+                                                
+                                                s_spt.update_req_detail_list_status(req_id, invoice_number, status_type)
+                                                    [DML] UPDATE 
+                                                        E01_COIN_REQ_DETAIL_LIST
+                                                        Updates: STATUS_SHORTAGE = 'Complete' 
+                                                        conditions: REQ_ID, INVOICE_NUMBER
+                                                
+                                [DML] DELETE 
+                                    E01_COIN_SHORTAGE_MASTER
+                                    conditions: invoice_number nằm trong E01_COIN_SHORTAGE_FULLOG
+                                                mà có reg_id = reg_id 
+                                            
+                                [DML] INSERT 
+                                    E01_COIN_SHORTAGE_MASTER
+                                    SELECT * E01_COIN_SHORTAGE_FULLOG 
+                                    conditions: reg_id 
+
+                                Với mỗi dòng trong df_req_detail:
+                                    nếu cột STATUS_DETAIL = 'Collected'
+                                        Lấy invoice_number
+                                        df_file_name = s_spt.get_list_file_by_invoicenumber(req_id, invoice_number)
+                                            Lấy tất cả các thông tin file trong bảng E01_COIN_DETAIL_FILEMAN
+                                            mà có reg_id và invoice_number
+                                        
+                                        với mỗi dòng trong df_file_name:
+                                            # thêm data vào các bảng trong trans_table
+                                            # update vào e01_detail_fileman
+                                            Lấy các thông tin: file_name, withdraw_time
+                                            not_def_check, remark_text, type_match_text = 
+                                                    s_spt.process_detail_file(req_id, file_name, invoice_number, withdraw_time)
+
+                                                man_cols_list = ['ID', 'REQ_ID', 'WITHDRAW_TIME', 'INVOICE_NUMBER']
+                                                type_info = s_spt.get_list_ori_cols(man_cols_list)
+                                                    df : Lấy thông tin từ bảng E01_COIN_TRANSITMAN_TABLES mà có STORAGE_REQUIREMENT = 1
+                                                    với mỗi dòng trong df:
+                                                        type_code = giá trị của cột TYPE_CODE 
+                                                        type_info {}
+                                                            type_code.TRANSIT_REQUIREMENT = giá trị cột TRANSIT_REQUIREMENT
+                                                                     .NOT_NULL_COL        =             NOT_NULL_COL
+                                                                     .TRANS_TABLE         =             TRANS_TABLE
+                                                                     .TRANS_DB            = s_spt.get_db_name(row['TRANS_TABLE'])
+                                                                     .DEST_TABLE          =             DEST_TABLE
+                                                                     .DEST_DB             = s_spt.get_db_name(row['DEST_TABLE'])
+                                                        
+                                                        df_cols: Lấy table_name, column_name, data_type trong bảng all_tab_columns
+                                                            mà có table_name = type_info[type_code]['TRANS_TABLE'] và 
+                                                                  owner = type_info[type_code]['TRANS_DB']
+                                                        
+                                                        list_cols = []
+                                                        với mỗi col nằm trong df_cols['COLUMN_NAME']:
+                                                            nếu col ko thuộc man_cols_list:
+                                                                list_cols.append(col)
+
+                                                        type_info[type_code]['LIST_COLS'] = list_cols
+
+                                                list_data, check_collect = s_spt.open_excel_file(req_id, invoice_number, file_name, withdraw_time)
+                                                        list_data = []
+                                                        open_excel_sheet(excel_file, sheet_name, ignore_cols)
+                                                            df_input = đọc file và xử lý columns ở file excel theo sheet.    
+                                                            new_data_cont {}
+                                                                file_name : file_name
+                                                                sheet_name : sheet_name
+                                                                withdraw_time : withdraw_time
+                                                                invoice_number : invoice_number
+                                                                reg_id : reg_id 
+                                                                df : df_input         
+                                                        list_data.append(new_data_cont)    
+                                                        check_collect = True   
+
+                                            s_spt.update_req_detail_list_status(req_id, invoice_number, status_type) 
+                                                [DML] UPDATE 
+                                                    E01_COIN_REQ_DETAIL_LIST   
+                                                    set : status_type = 'Complete'
+                                                    conditions: reg_id, invoice_number
+
+                                            done_list_1 = s_spt.update_dest_fullog(req_id, True)
+                                                tranman_table = table E01_COIN_TRANSITMAN_TABLES
+                                                tranman_cols = table E01_COIN_TRANSITMAN_COLS
+                                                
+                                                Với mỗi hàng tranman_table:
+                                                    transit_requirement = giá trị cột TRANSIT_REQUIREMENT
+                                                    type_code = giá trị cột TYPE_CODE
+                                                    Nếu transit_requirement =1 :
+                                                        ori_table = giá trị cột TRANS_TABLE
+                                                        ori_db = s_spt.get_db_name(ori_table)
+                                                        dest_table = giá trị cột DEST_TABLE
+                                                        dest_db = s_spt.get_db_name(dest_table)
+
+                                                        tranman_cols_spec = Lấy những dòng có cột TYPE_CODE = type_code
+                                                        ori_cols = nối giá trị cột TRANS_COL của tranman_cols_spec
+                                                        dest_cols = nối giá trị cột DEST_COL của tranman_cols_spec
+
+                                                        [DML] DELETE    
+                                                            dest_db.dest_table
+                                                            conditions: reg_id, ref_type = type_code 
+                                                        
+                                                        [DML] INSERT 
+                                                            dest_db.dest_table (ref_type, dest_cols)
+                                                            SELECT type_code, ori_cols FROM ori_db.ori_table
+                                                            conditions: reg_id 
+                                                        
+                                                        done_list_1.append([type_code,ori_table,dest_table])
+
+                                            done_list_2 = s_spt.update_dest_master(req_id)
+                                                
 
 
         
